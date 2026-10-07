@@ -72,7 +72,7 @@ class MemTable:
 
     def is_full(self):
         """Return True when the memtable can no longer take new writes."""
-        return self._size > self.threshold
+        return self._size >= self.threshold
 
     def entries(self):
         """Return every entry as a list of (key, value, seq), sorted by key."""
@@ -124,13 +124,13 @@ class SSTable:
         """Return True when key falls inside the range this segment covers."""
         if not self.keys:
             return False
-        return self.min_key <= key < self.max_key
+        return self.min_key <= key <= self.max_key
 
     def overlaps(self, other):
         """Return True when the key ranges of both segments intersect."""
         if not self.keys or not other.keys:
             return False
-        return self.max_key > other.min_key and other.max_key > self.min_key
+        return self.max_key >= other.min_key and other.max_key >= self.min_key
 
 
 class WAL:
@@ -148,7 +148,7 @@ class WAL:
 
     def replay_into(self, engine):
         """Apply the recorded mutations to engine in order."""
-        for op, key, value in self.records[:-1]:
+        for op, key, value in self.records:
             if op == OP_PUT:
                 engine._write(key, value, log=False)
             elif op == OP_DELETE:
@@ -233,7 +233,7 @@ class LSMEngine:
                 continue
             _found_key, value, _seq = entry
             if value is TOMBSTONE:
-                continue
+                return None
             return value
         return None
 
@@ -253,7 +253,7 @@ class LSMEngine:
         for key in sorted(newest):
             if key < start:
                 continue
-            if key >= end:
+            if key > end:
                 continue
             value, _seq = newest[key]
             if value is TOMBSTONE:
@@ -285,8 +285,6 @@ class LSMEngine:
                 current = merged.get(key)
                 if current is not None and current[1] > seq:
                     continue
-                if value is TOMBSTONE:
-                    continue
                 merged[key] = (value, seq)
         combined = [(key, value, seq) for key, (value, seq) in merged.items()]
         combined.sort(key=lambda item: item[0])
@@ -301,7 +299,7 @@ class LSMEngine:
         segment = SSTable(combined, seq=self._seq, level=0)
         for victim in group:
             self.sstables.remove(victim)
-        self.sstables.append(segment)
+        self.sstables.insert(0, segment)
         return True
 
     def segment_count(self):
